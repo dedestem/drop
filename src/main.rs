@@ -1,15 +1,18 @@
+use chrono::{DateTime, Local, Utc};
 use clap::{Arg, Command};
-use tokio::net::{UdpSocket, TcpListener, TcpStream};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use colored::*;
+use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use chrono::{DateTime, Utc, Local};
-use std::time::Duration;
 use std::path::Path;
-use std::ffi::OsStr;
-            
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::sync::Mutex;
+use tokio::time::sleep; // For colored output
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let matches = Command::new("drop")
@@ -19,7 +22,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .subcommand(
             Command::new("catch")
                 .about("Download a file shared by a peer")
-                .arg(Arg::new("name").required(true).help("The name of the file to catch")),
+                .arg(
+                    Arg::new("name")
+                        .required(true)
+                        .help("The name of the file to catch"),
+                ),
         )
         .subcommand(
             Command::new("drop")
@@ -44,16 +51,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 async fn listen() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let socket = UdpSocket::bind("0.0.0.0:9000").await?;
-    println!("👂 Listening on 0.0.0.0:9000 for file announcements...\n");
+    println!(
+        "{}",
+        "👂 Listening on 0.0.0.0:9000 for file announcements...".green()
+    );
 
     let mut buf = [0; 1024];
+    let mut seen_peers: HashSet<String> = HashSet::new(); // Track unique peers
 
     loop {
+        // Receive message from peer
         let (len, addr) = socket.recv_from(&mut buf).await?;
         let msg = String::from_utf8_lossy(&buf[..len]);
         let timestamp = Local::now().format("%H:%M:%S");
 
-        println!("[{}] 📢 {} from {}", timestamp, msg, addr);
+        // If it's a new peer, add to seen_peers set
+        if !seen_peers.contains(&addr.to_string()) {
+            seen_peers.insert(addr.to_string());
+        }
+
+        // Clear screen before updating
+        print!("\x1b[2J\x1b[H");
+
+        // Print the active peers and message received
+        println!(
+            "{} [{}] {} from {}",
+            "[INFO]".yellow(),
+            timestamp,
+            "📢".cyan(),
+            addr
+        );
+        println!("{}", "------------------------------".green());
+
+        // Display active peers count
+        println!(
+            "{} Active peers: {}",
+            "[STATUS]".magenta(),
+            seen_peers.len() // Display unique peers count
+        );
+        println!("{}", "------------------------------".green());
+
+        // Print received message
+        println!("{} {}", "[MESSAGE]".blue(), msg.bold().italic());
+        println!("{}", "------------------------------".green());
+
+        // Delay to avoid too much spamming of the terminal
+        sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -82,7 +125,10 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
         async move {
             let mut count = 1;
             loop {
-                if let Err(e) = socket_clone.send_to(broadcast_msg.as_bytes(), "255.255.255.255:9000").await {
+                if let Err(e) = socket_clone
+                    .send_to(broadcast_msg.as_bytes(), "255.255.255.255:9000")
+                    .await
+                {
                     eprintln!("❌ Failed to send broadcast: {}", e);
                 }
 
@@ -119,7 +165,10 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
         }
     });
 
-    println!("📡 Sharing '{}', waiting for download requests...", *file_clone);
+    println!(
+        "📡 Sharing '{}', waiting for download requests...",
+        *file_clone
+    );
 
     let listener = TcpListener::bind("0.0.0.0:9001").await?;
 
@@ -135,7 +184,7 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
                 {
                     let mut count = counter_clone.lock().await;
                     *count += 1; // Increment active downloads
-                    // Log peer connection
+                                 // Log peer connection
                     println!("📥 Peer connected! Active downloads: {}", count);
                 }
 
@@ -149,7 +198,7 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
 
                 if let Err(e) = handle_client(socket, file_clone.clone()).await {
                     eprintln!("❌ Error handling client: {}", e);
-                    
+
                     // Log the download error event
                     {
                         let mut log = logs_clone.lock().await;
@@ -160,14 +209,14 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
                 {
                     let mut count = counter_clone.lock().await;
                     *count -= 1; // Decrement active downloads after the file is sent
-                    // Log file sent
+                                 // Log file sent
                     println!("✅ File sent! Active downloads: {}", count);
                 }
 
                 {
                     let mut success = successful_downloads_clone.lock().await;
                     *success += 1; // Increment successful downloads
-                    // Log total successful downloads
+                                   // Log total successful downloads
                     println!("✅ Total successful downloads: {}", success);
                 }
 
@@ -181,7 +230,10 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
     }
 }
 
-async fn handle_client(mut socket: TcpStream, file: Arc<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn handle_client(
+    mut socket: TcpStream,
+    file: Arc<String>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut file = File::open(&*file)?;
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
@@ -193,6 +245,8 @@ async fn handle_client(mut socket: TcpStream, file: Arc<String>) -> Result<(), B
 }
 
 async fn catch(name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Clear screen before updating
+    print!("\x1b[2J\x1b[H");
     println!("🔍 Searching for '{}' on the network...", name);
 
     let socket = UdpSocket::bind("0.0.0.0:9000").await?;
@@ -207,13 +261,12 @@ async fn catch(name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync
             println!("🎯 Found '{}' at peer: {}", name, addr);
 
             let peer_ip = addr.ip().to_string();
-        
+
             let filename = Path::new(name)
                 .file_name()
-                .unwrap_or_else(|| OsStr::new(name))  // Use OsStr::new for default value
+                .unwrap_or_else(|| OsStr::new(name)) // Use OsStr::new for default value
                 .to_str()
-                .unwrap();  // Convert to &str
-
+                .unwrap(); // Convert to &str
 
             match download_file(&peer_ip, filename).await {
                 Ok(_) => {
@@ -228,7 +281,10 @@ async fn catch(name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync
 
         attempts += 1;
         if attempts % 5 == 0 {
-            println!("⏳ Still searching for '{}'... {} attempts made", name, attempts);
+            println!(
+                "⏳ Still searching for '{}'... {} attempts made",
+                name, attempts
+            );
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
@@ -236,9 +292,15 @@ async fn catch(name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync
     Ok(())
 }
 
-async fn download_file(peer_ip: &str, filename: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn download_file(
+    peer_ip: &str,
+    filename: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = format!("{}:9001", peer_ip);
-    println!("📡 Connecting to {} to download file '{}'...", addr, filename);
+    println!(
+        "📡 Connecting to {} to download file '{}'...",
+        addr, filename
+    );
 
     let mut socket = match TcpStream::connect(&addr).await {
         Ok(s) => s,
@@ -257,9 +319,9 @@ async fn download_file(peer_ip: &str, filename: &str) -> Result<(), Box<dyn std:
         if bytes_read == 0 {
             break; // EOF
         }
-        file.write_all(&buf[..bytes_read])?; // Write chunk to file
+        file.write_all(&buf[..bytes_read])?; // Write the downloaded chunk to the file
     }
 
-    println!("✅ Successfully downloaded file! Saved as '{}'", filename);
+    println!("✅ File '{}' downloaded successfully!", filename);
     Ok(())
 }
