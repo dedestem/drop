@@ -62,11 +62,11 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
             if let Err(e) = socket.send_to(broadcast_msg.as_bytes(), "255.255.255.255:9000").await {
                 eprintln!("Failed to send broadcast: {}", e);
             }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     });
 
-    println!("📡 Broadcasting file '{}' every 5 seconds", file);
+    println!("📡 Broadcasting file '{}' ", file);
 
     let listener = TcpListener::bind("0.0.0.0:9001").await?;
     println!("📥 Listening for file requests on 0.0.0.0:9001...");
