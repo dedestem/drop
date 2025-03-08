@@ -56,17 +56,25 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
     socket.set_broadcast(true)?;
 
     let broadcast_msg = format!("File available: {}", file);
-    socket.send_to(broadcast_msg.as_bytes(), "255.255.255.255:9000").await?;
 
-    println!("📡 Broadcasted file '{}' to network", file);
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = socket.send_to(broadcast_msg.as_bytes(), "255.255.255.255:9000").await {
+                eprintln!("Failed to send broadcast: {}", e);
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
+
+    println!("📡 Broadcasting file '{}' every 5 seconds", file);
 
     let listener = TcpListener::bind("0.0.0.0:9001").await?;
     println!("📥 Listening for file requests on 0.0.0.0:9001...");
 
-    let file = Arc::new(file); // Deelbaar tussen taken
+    let file = Arc::new(file);
     loop {
         let (socket, _) = listener.accept().await?;
-        let file_clone = Arc::clone(&file); // Clone een gedeelde string
+        let file_clone = Arc::clone(&file);
         tokio::spawn(async move {
             if let Err(e) = handle_client(socket, file_clone).await {
                 eprintln!("Error handling client: {}", e);
@@ -74,6 +82,7 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
         });
     }
 }
+
 
 async fn handle_client(mut socket: TcpStream, file: Arc<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut file = File::open(&*file)?; // Arc<String> naar &str converteren
