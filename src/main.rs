@@ -5,9 +5,11 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Utc, Local};
 use std::time::Duration;
-
+use std::path::Path;
+use std::ffi::OsStr;
+            
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let matches = Command::new("drop")
@@ -54,8 +56,6 @@ async fn listen() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("[{}] 📢 {} from {}", timestamp, msg, addr);
     }
 }
-
-
 
 async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
@@ -181,7 +181,6 @@ async fn drop_file(file: String) -> Result<(), Box<dyn std::error::Error + Send 
     }
 }
 
-
 async fn handle_client(mut socket: TcpStream, file: Arc<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut file = File::open(&*file)?;
     let mut buffer = Vec::new();
@@ -208,7 +207,15 @@ async fn catch(name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync
             println!("🎯 Found '{}' at peer: {}", name, addr);
 
             let peer_ip = addr.ip().to_string();
-            match download_file(&peer_ip).await {
+        
+            let filename = Path::new(name)
+                .file_name()
+                .unwrap_or_else(|| OsStr::new(name))  // Use OsStr::new for default value
+                .to_str()
+                .unwrap();  // Convert to &str
+
+
+            match download_file(&peer_ip, filename).await {
                 Ok(_) => {
                     println!("✅ Successfully downloaded '{}'", name);
                     break;
@@ -229,9 +236,9 @@ async fn catch(name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync
     Ok(())
 }
 
-async fn download_file(peer_ip: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn download_file(peer_ip: &str, filename: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = format!("{}:9001", peer_ip);
-    println!("📡 Connecting to {} to download file...", addr);
+    println!("📡 Connecting to {} to download file '{}'...", addr, filename);
 
     let mut socket = match TcpStream::connect(&addr).await {
         Ok(s) => s,
@@ -241,12 +248,17 @@ async fn download_file(peer_ip: &str) -> Result<(), Box<dyn std::error::Error + 
         }
     };
 
-    let mut buffer = Vec::new();
-    socket.read_to_end(&mut buffer).await?;
-
-    let filename = "received_file.txt";
+    let mut buffer: Vec<u8> = Vec::new();
     let mut file = File::create(filename)?;
-    file.write_all(&buffer)?;
+
+    // Download the file in chunks (e.g., 64k chunks)
+    let mut buf = vec![0; 64 * 1024]; // 64 KB buffer
+    while let Ok(bytes_read) = socket.read(&mut buf).await {
+        if bytes_read == 0 {
+            break; // EOF
+        }
+        file.write_all(&buf[..bytes_read])?; // Write chunk to file
+    }
 
     println!("✅ Successfully downloaded file! Saved as '{}'", filename);
     Ok(())
