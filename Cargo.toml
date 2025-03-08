@@ -1,0 +1,10 @@
+[package]
+name = "drop"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-udp = "0.3.0"
+clap = "4.0"  # For command-line argument parsing
+async-std = "1.10"
